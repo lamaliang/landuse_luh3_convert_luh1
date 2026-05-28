@@ -1,222 +1,228 @@
 # LUH3 to LUH1 Converter for TaiESM1/CLM4
 
-## 概述
+Convert LUH3 (CMIP7) land use data to LUH1 format for use with the TaiESM1/CLM4 `mksurfdat` tool.
 
-此工具將 LUH3 (CMIP7) 格式的土地利用資料轉換為 LUH1 格式，供 TaiESM1/CLM4 的 mksurfdat 工具使用。
+**Version:** 6.0 | **Author:** Hsin-Chien Liang @ AC3/RCEC, Academia Sinica | **Contact:** lama@gate.sinica.edu.tw
 
-## 轉換內容
+---
 
-### 輸入: LUH3 格式
-- 解析度: 1440×720 (0.25°)
-- PFT 結構: 15 natural PFTs + 64 CFTs (分離)
-- 資料類型: double
-- FillValue: -9999.0
+## Overview
 
-### 輸出: LUH1 格式
-- 解析度: 720×360 (0.5°)
-- PFT 結構: 17 PFTs (混合)
-- 資料類型: float
-- FillValue: -999.0
+This tool reads LUH3-format NetCDF files (0.25°, CMIP7) and produces LUH1-format NetCDF files (0.5°, CLM4-compatible) suitable for driving TaiESM1/CESM1 land surface initialization and dynamic land use runs via `mksurfdat`.
 
-## 主要變數對應
+---
 
-| LUH3 | LUH1 | 轉換邏輯 |
-|------|------|----------|
-| PCT_NAT_PFT[0-14] + PCT_NATVEG | PCT_PFT[0-14] | PCT_NATVEG × PCT_NAT_PFT[k] / 100 × residule / 100 |
-| PCT_CROP | PCT_PFT[15] | residule - sum(PCT_PFT[0-14]) |
-| N/A | PCT_PFT[16] | 0 (bare ground) |
-| HARVEST_VH1/VH2/SH1/SH2/SH3 | HARVEST_VH1/VH2/SH1/SH2/SH3 | 空間降解析度 |
-| GRAZING | GRAZING | 空間降解析度 |
+## Data Format Comparison
 
-## 安裝需求
+| Property | LUH3 (Input) | LUH1 (Output) |
+|---|---|---|
+| Resolution | 1440×720 (0.25°) | 720×360 (0.5°) |
+| PFT structure | 15 natural PFTs + 64 CFTs (separate) | 17 PFTs (combined) |
+| Data type | double | float |
+| FillValue | −9999.0 | −999.0 |
+
+---
+
+## PFT Mapping
+
+### LUH3 Structure
+- `PCT_NAT_PFT[0]`: bare ground total percentage (not a vegetation type)
+- `PCT_NAT_PFT[1–14]`: 14 natural vegetation PFTs
+- `PCT_CFT[0–31]`: rainfed crop functional types (~67%)
+- `PCT_CFT[32–63]`: irrigated crop functional types (~33%)
+
+### LUH1 Output Structure
+| LUH1 Index | Source | Description |
+|---|---|---|
+| PFT[0] | LUH1 reference (adjusted) | Bare ground (residual) |
+| PFT[1–14] | `PCT_NAT_PFT[1–14] × PCT_NATVEG / 100` | 14 natural vegetation types |
+| PFT[15] | `PCT_CROP` | All crops (rainfed + irrigated combined) |
+| PFT[16] | 0 (fixed) | Unused in CLM4 |
+
+### Conversion Algorithm
+```
+1. residule = 100 - PCT_GLACIER - PCT_LAKE - PCT_WETLAND - PCT_URBAN
+
+2. PFT[1–14] (natural vegetation):
+   PCT_PFT[k] = PCT_NAT_PFT[k+1] × PCT_NATVEG / 100   (k = 0..13)
+
+3. PFT[15] (crops):
+   PCT_PFT[15] = PCT_CROP
+
+4. PFT[16] = 0
+
+5. PFT[0] (bare ground):
+   PCT_PFT[0] = 100 - sum(PFT[1:16])
+
+6. If PFT[0] < 0 (sum exceeds 100%):
+   scale PFT[1–15] by 100 / sum(PFT[1:16]), set PFT[0] = 0
+
+7. Coastal / low-vegetation points (PCT_NATVEG + PCT_CROP < 1%):
+   keep all PFT values from LUH1 reference
+```
+
+---
+
+## Spatial Regridding
+
+Uses **nearest-neighbour** regridding (not area-averaging) to avoid coastal dilution artifacts when going from 0.25° to 0.5°. Each output grid point maps to the single nearest input point.
+
+If a LUH1 reference directory is provided, the LANDMASK is taken directly from the reference files and used as the master mask throughout.
+
+---
+
+## Installation
 
 ```bash
 # Python 3.6+
 pip install numpy netCDF4 scipy
 ```
 
-## 使用方法
+---
 
-### 1. 單一檔案轉換
+## Usage
 
+### Single file
 ```bash
 python convert_luh3_to_luh1.py \
-    -i /path/to/luh3_2019.nc \
-    -o /path/to/luh1_2019.nc
+    -i mksrf_landuse_clm6_histLUH3_1850.c251012.nc \
+    -o mksrf_landuse_rc1850_c260324.nc \
+    --luh1-ref /path/to/pftlandusedyn.0.5x0.5.simyr1850-2005.c090630/
 ```
 
-### 2. 批次轉換 (1850-2023)
-
-**步驟 1**: 編輯 `batch_convert_luh3_to_luh1.sh`，設定路徑：
-
-```bash
-LUH3_DIR="/your/luh3/data/directory"
-LUH1_OUTPUT_DIR="/your/output/directory"
+### Full argument reference
+```
+-i / --input       Input LUH3 NetCDF file (required)
+-o / --output      Output LUH1 NetCDF file (required)
+--luh1-ref         Directory containing LUH1 reference files
+                   (e.g. mksrf_landuse_rc1850_c090630.nc)
+                   Used for: LANDMASK, grid definition, PFT[0] baseline, GRAZING
+-q / --quiet       Suppress progress messages
 ```
 
-**步驟 2**: 調整檔案命名模式（如需要）：
+### Batch conversion (1850–2023)
 
-```bash
-# 例如，如果您的檔案名稱是:
-# mksrf_landuse_clm6_histLUH3_1850.c251012.nc
-# mksrf_landuse_clm6_histLUH3_1851.c251012.nc
-# ...
-
-LUH3_PATTERN="mksrf_landuse_clm6_histLUH3_YEAR.c251012.nc"
-LUH1_PATTERN="mksrf_landuse_rcYEAR_converted.nc"
-```
-
-**步驟 3**: 執行批次轉換：
+Edit `batch_convert_luh3_to_luh1.sh` to set input/output paths and file naming pattern, then run:
 
 ```bash
 chmod +x batch_convert_luh3_to_luh1.sh
 ./batch_convert_luh3_to_luh1.sh
 ```
 
-### 3. 驗證轉換結果
+---
+
+## LUH1 Reference Files
+
+The `--luh1-ref` directory is strongly recommended. The converter uses it for:
+
+- **LANDMASK** — master land/ocean mask applied to all output fields
+- **Grid definition** — `LONGXY`, `LATIXY`, `EDGEN/E/S/W`
+- **PFT[0] baseline** — bare ground fraction for glacier-dominated and data-sparse points
+- **GRAZING** — for years ≤ 2005; for years > 2005, the 2005 reference value is reused
+
+Expected filename pattern: `mksrf_landuse_rc{YEAR}_c090630.nc`
+
+---
+
+## Output Variables
+
+| Variable | Dimensions | Description |
+|---|---|---|
+| `PCT_PFT` | (17, lat, lon) | Percent plant functional type |
+| `HARVEST_VH1/VH2` | (lat, lon) | Harvest: virgin/heavily wooded |
+| `HARVEST_SH1/SH2/SH3` | (lat, lon) | Harvest: secondary wooded/non-wooded |
+| `GRAZING` | (lat, lon) | Grazing fraction |
+| `LANDMASK` | (lat, lon) | Land/ocean mask |
+| `LONGXY`, `LATIXY` | (lat, lon) | 2D coordinate arrays |
+| `LON`, `LAT` | (lon), (lat) | 1D coordinate arrays |
+
+---
+
+## Output Verification
 
 ```bash
-python validate_conversion.py \
-    -i /path/to/luh1_2019.nc \
-    --check-pft-sum \
-    --check-ranges
+# 1. Check dimensions
+ncdump -h output.nc | grep dimensions
+# Expected: lon = 720, lat = 360, pft = 17
+
+# 2. Check PFT sum (land points should be ~100%)
+ncap2 -s 'pft_sum=PCT_PFT.total($pft)' output.nc test.nc
+
+# 3. Check data range
+ncdump -v PCT_PFT output.nc | grep -A 5 "PCT_PFT ="
+# All values should be in 0–100
 ```
 
-## 轉換邏輯說明
+---
 
-### PFT 轉換
+## Known Issues
 
-基於參考 R 腳本的邏輯：
+### 1. Harvest units
+- LUH3 uses `gC/m²/yr`; LUH1 expects unitless fractions
+- Current version retains original values without unit conversion
+- May require a scaling factor depending on what `mksurfdat` expects
 
-```
-1. 計算 residule = 100 - (glacier + lake + wetland + urban)
+### 2. 2005–2006 transition
+- If original LUH1 data is available for 1850–2005, it is recommended to:
+  - 1850–2005: use original LUH1 files
+  - 2006–2023: use converted LUH3 files
+  - Check continuity at the boundary year
 
-2. PFT 0-14 (自然植被):
-   PCT_PFT[k] = PCT_NATVEG × PCT_NAT_PFT[k] / 100 × residule / 100
+### 3. Coastal/boundary artifacts
+- Points where `|PCT_PFT[0]_calculated - PCT_PFT[0]_reference| > 30%` are flagged as coastal artifacts and reverted to reference PFT values
+- High-latitude (polar) regions with large glacier/lake fractions are handled separately
 
-3. PFT 15 (作物):
-   PCT_PFT[15] = residule - sum(PCT_PFT[0:15])
-   
-   邊界檢查:
-   - 如果 < 0, 設為 0
-   - 如果 sum > 100%, 調整為 100 - sum(PCT_PFT[0:15])
+### 4. Memory
+- Single year: ~500 MB RAM
+- Batch run: 2 GB+ recommended
 
-4. PFT 16 (裸地):
-   PCT_PFT[16] = 0 (根據需求設定)
+---
 
-5. 重新縮放確保總和 = 100%:
-   - 計算總和
-   - 如果總和 ≠ 100%, 按比例縮放
-   - 將剩餘誤差加到最大的 PFT
-```
-
-### 空間降解析度
-
-使用 2×2 區塊平均法，從 0.25° 降到 0.5°：
-
-```
-對每個 LUH1 網格點 (i, j):
-  取 LUH3 的 2×2 區塊 [2i:2i+2, 2j:2j+2]
-  計算平均值 (忽略 NaN)
-```
-
-## 輸出檔案檢查
-
-轉換完成後，請檢查：
-
-1. **維度正確**
-   ```bash
-   ncdump -h output.nc | grep dimensions
-   # 應該看到: lon = 720, lat = 360, pft = 17
-   ```
-
-2. **PFT 總和**
-   ```bash
-   # 使用 NCO 工具
-   ncap2 -s 'pft_sum=PCT_PFT.total($pft)' output.nc test.nc
-   ncwa -a pft -v PCT_PFT output.nc -O test.nc
-   # 檢查 pft_sum 是否接近 100
-   ```
-
-3. **資料範圍合理**
-   ```bash
-   ncdump -v PCT_PFT output.nc | grep -A 5 "PCT_PFT ="
-   # 檢查數值是否在 0-100 範圍內
-   ```
-
-## 已知問題與注意事項
-
-### 1. Harvest 單位
-- LUH3: `gC/m2/yr` (碳通量)
-- LUH1: `unitless` (無單位)
-- **當前版本**: 保持原始數值，未進行單位轉換
-- **可能需要**: 根據 mksurfdat 的期望調整單位轉換係數
-
-### 2. 2005-2006 交接處
-- 如果您有 LUH1 原始資料 (1850-2005)，建議：
-  - 1850-2005: 使用原始 LUH1
-  - 2006-2023: 使用轉換後的 LUH3
-  - 檢查 2005-2006 的連續性
-
-### 3. 邊界像素
-- 極地區域可能有較多 glacier/lake
-- 請特別檢查高緯度地區的轉換結果
-
-### 4. 記憶體需求
-- 單一年份檔案: ~500 MB RAM
-- 批次處理: 建議 2 GB+ RAM
-
-## 後續步驟：使用 mksurfdat
-
-轉換完成後，使用 TaiESM1 的 mksurfdat 工具：
+## Next Steps: mksurfdat
 
 ```bash
-# 範例 (實際指令請參考 TaiESM1 文件)
 mksurfdat \
-    --luh1-dir /path/to/converted/luh1/files \
+    --luh1-dir /path/to/converted/luh1/ \
     --start-year 1850 \
     --end-year 2023 \
     --output fsurdat.nc \
     --output-dyndat fdyndat.nc
 ```
 
-## 問題排查
+Refer to TaiESM1/CLM4 documentation for the full `mksurfdat` configuration.
 
-### 問題 1: "Failed to open NetCDF file"
-- 檢查檔案路徑是否正確
-- 確認有讀取權限
-- 檢查檔案是否損壞: `ncdump -h file.nc`
+---
 
-### 問題 2: "PCT_PFT sum > 100%"
-- 這是正常的中間狀態
-- 腳本會自動重新縮放
-- 如果最終輸出仍 > 100%, 請檢查 residule 計算
+## Troubleshooting
 
-### 問題 3: 記憶體不足
-- 減少批次處理的並行數
-- 增加系統 swap 空間
-- 使用分時段處理
+| Error | Likely Cause | Fix |
+|---|---|---|
+| `Required variable 'X' not found` | Missing variable in LUH3 input | Check input file with `ncdump -h` |
+| `PCT_NAT_PFT shape[0] != 15` | Wrong LUH3 format version | Verify data source |
+| `PCT_PFT sum > 100%` | Normal intermediate state | Script auto-rescales; check `residule` if persists in output |
+| Out of memory | Large batch job | Reduce parallelism or add swap |
 
-## 參考資料
+---
 
-1. **R 腳本**: 原始 CLM4 PFT 映射邏輯
-2. **C 程式**: CTSM5.2 land use data tool (百分比縮放邏輯)
-3. **LUH3 文件**: https://luh.umd.edu/
-4. **TaiESM1**: Taiwan Earth System Model
+## References
 
-## 版本歷史
+1. R script — original CLM4 PFT mapping logic
+2. CTSM5.2 land use data tool — percentage scaling logic (C)
+3. LUH3 documentation: https://luh.umd.edu/
+4. TaiESM1: Taiwan Earth System Model (AC3/RCEC, Academia Sinica)
 
-- v1.0 (2026-01-28): 初始版本
-  - 基本 LUH3 → LUH1 轉換
-  - PFT 結構轉換
-  - 空間降解析度
-  - Harvest 資料處理
+---
 
-## 授權
+## Version History
 
-本工具基於 TaiESM1 計畫開發，用於科學研究目的。
+| Version | Date | Changes |
+|---|---|---|
+| 6.0 | 2026-03-24 | Corrected PFT mapping based on LUH3 data structure analysis; switched to nearest-neighbour regridding; LUH1 reference LANDMASK as master; coastal artifact detection |
+| 1.0 | 2026-01-28 | Initial release — basic LUH3→LUH1 conversion, PFT structure conversion, spatial regridding, harvest data |
 
-## 聯絡資訊
+---
 
-如有問題或建議，請聯繫 TaiESM1 團隊。
-# landuse_luh3_convert_luh1
+## License
+
+Developed under the TaiESM1 project for scientific research purposes.
+
