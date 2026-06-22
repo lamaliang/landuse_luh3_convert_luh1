@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-LUH3 (CMIP7) to LUH1 (CLM4) Land Use Data Converter - Version 6.0
+LUH3 (CMIP7) to LUH1 (CLM4) Land Use Data Converter - Version 6.1
 
 Correct PFT Mapping Based on Data Analysis:
 
@@ -28,7 +28,7 @@ Conversion Algorithm:
 4. Bare ground: PFT[16] = residule - sum(PFT[0-15])
    where residule = 100 - PCT_GLACIER - PCT_LAKE - PCT_WETLAND - PCT_URBAN
 
-Author: Based on LUH3 data structure analysis
+Author: Hsin-Chien Liang Based on LUH3 data structure analysis
 Date: 2026-03-24
 Version: 6.0
 """
@@ -75,9 +75,9 @@ class LUH3toLUH1Converter:
             'PCT_NAT_PFT',  # (15, lat, lon) - natpft[0]=bare, natpft[1-14]=vegetation
             'PCT_CFT',      # (64, lat, lon) - crop functional types
             'PCT_GLACIER', 'PCT_LAKE', 'PCT_WETLAND', 'PCT_URBAN',
-            'HARVEST_VH1', 'HARVEST_VH2',
-            'HARVEST_SH1', 'HARVEST_SH2', 'HARVEST_SH3',
             'GRAZING'
+            # HARVEST_* intentionally excluded: LUH3 uses gC/m2/yr (CLM6 format),
+            # CLM4 expects unitless fraction. Use LUH1 reference values instead.
         ]
         
         for var in required_vars:
@@ -214,10 +214,17 @@ class LUH3toLUH1Converter:
                             self.luh1_data[field] = ds_ref.variables[field][:]
                             self.log(f"    Copied {field} from LUH1 reference")
                     
-                    # Load GRAZING for 1850-2005
+                    # Load GRAZING and HARVEST from LUH1 reference (correct CLM4 units)
                     if 'GRAZING' in ds_ref.variables:
                         self.luh1_data['GRAZING'] = ds_ref.variables['GRAZING'][:]
-                        self.log(f"    Loaded GRAZING from LUH1 reference")
+                        self.log(f"    Loaded GRAZING from LUH1 reference ({ref_year})")
+
+                    harvest_vars = ['HARVEST_VH1', 'HARVEST_VH2', 'HARVEST_SH1',
+                                    'HARVEST_SH2', 'HARVEST_SH3']
+                    for hvar in harvest_vars:
+                        if hvar in ds_ref.variables:
+                            self.luh1_data[hvar] = ds_ref.variables[hvar][:]
+                            self.log(f"    Loaded {hvar} from LUH1 reference ({ref_year})")
                     
                     luh1_reference_loaded = True
                     
@@ -321,21 +328,14 @@ class LUH3toLUH1Converter:
         
         self.luh1_data['PCT_CFT'] = pct_cft_out
         
-        # Harvest variables
-        for var in ['HARVEST_VH1', 'HARVEST_VH2', 'HARVEST_SH1', 
-                    'HARVEST_SH2', 'HARVEST_SH3']:
-            self.log(f"    Regridding {var}...")
-            self.luh1_data[var] = self.regrid_2d_conservative(
-                self.luh3_data[var],
-                method=regrid_method,
-                landmask_in=luh3_landmask
-            )
-            self.luh1_data[var] = np.where(
-                luh1_landmask > 0.5,
-                self.luh1_data[var],
-                0.0
-            )
-        
+        # HARVEST: loaded from LUH1 reference above; add fallback if reference unavailable
+        harvest_vars = ['HARVEST_VH1', 'HARVEST_VH2', 'HARVEST_SH1',
+                        'HARVEST_SH2', 'HARVEST_SH3']
+        for hvar in harvest_vars:
+            if hvar not in self.luh1_data:
+                self.log(f"    Warning: {hvar} not in LUH1 reference, setting to 0")
+                self.luh1_data[hvar] = np.zeros((self.luh1_ny, self.luh1_nx))
+
         # GRAZING
         if 'GRAZING' not in self.luh1_data and self.luh1_reference_dir:
             import re
@@ -680,11 +680,11 @@ class LUH3toLUH1Converter:
         pft_var.units = 'percent'
         pft_var[:] = self.luh1_data['PCT_PFT']
         
-        # Harvest variables
+        # Harvest variables (values from LUH1 reference, unitless fraction)
         for var_name in ['HARVEST_VH1', 'HARVEST_VH2', 'HARVEST_SH1', 'HARVEST_SH2', 'HARVEST_SH3']:
             var = ds_out.createVariable(var_name, 'f4', ('lat', 'lon'))
             var.long_name = f'{var_name} harvest'
-            var.units = 'fraction'
+            var.units = 'unitless'
             var[:] = self.luh1_data[var_name]
         
         # GRAZING
@@ -700,7 +700,7 @@ class LUH3toLUH1Converter:
         ds_out.conversion_date = str(np.datetime64('now'))
         ds_out.conventions = 'CF-1.0'
         ds_out.history = 'LUH3 CMIP7 data converted to LUH1 CLM4 format'
-        ds_out.comment = 'PFT[0] from LUH1 reference, PFT[1-15] from LUH3, PFT[16]=0'
+        ds_out.comment = 'PFT[0] from LUH1 reference, PFT[1-15] from LUH3, PFT[16]=0; HARVEST/GRAZING from LUH1 reference (frozen at 2005 for years>2005)'
         ds_out.producer = 'Hsin-Chien Liang @ AC3/RCEC, Academia Sinica'
         ds_out.contact = 'lama@gate.sinica.edu.tw'
         
@@ -710,7 +710,7 @@ class LUH3toLUH1Converter:
     def run(self):
         """Execute full conversion workflow"""
         self.log("="*70)
-        self.log("LUH3 to LUH1 Converter - Version 6.0")
+        self.log("LUH3 to LUH1 Converter - Version 6.1")
         self.log("="*70)
         
         self.load_luh3_data()

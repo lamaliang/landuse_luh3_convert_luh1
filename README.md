@@ -2,7 +2,7 @@
 
 Convert LUH3 (CMIP7) land use data to LUH1 format for use with the TaiESM1/CLM4 `mksurfdat` tool.
 
-**Version:** 6.0 | **Author:** Hsin-Chien Liang @ AC3/RCEC, Academia Sinica | **Contact:** lama@gate.sinica.edu.tw
+**Version:** 6.1 | **Author:** Hsin-Chien Liang @ AC3/RCEC, Academia Sinica | **Contact:** lama@gate.sinica.edu.tw
 
 ---
 
@@ -126,15 +126,15 @@ Expected filename pattern: `mksrf_landuse_rc{YEAR}_c090630.nc`
 
 ## Output Variables
 
-| Variable | Dimensions | Description |
-|---|---|---|
-| `PCT_PFT` | (17, lat, lon) | Percent plant functional type |
-| `HARVEST_VH1/VH2` | (lat, lon) | Harvest: virgin/heavily wooded |
-| `HARVEST_SH1/SH2/SH3` | (lat, lon) | Harvest: secondary wooded/non-wooded |
-| `GRAZING` | (lat, lon) | Grazing fraction |
-| `LANDMASK` | (lat, lon) | Land/ocean mask |
-| `LONGXY`, `LATIXY` | (lat, lon) | 2D coordinate arrays |
-| `LON`, `LAT` | (lon), (lat) | 1D coordinate arrays |
+| Variable | Dimensions | Description | Source |
+|---|---|---|---|
+| `PCT_PFT` | (17, lat, lon) | Percent plant functional type | LUH3 (converted) |
+| `HARVEST_VH1/VH2` | (lat, lon) | Harvest: primary forest/non-forest (unitless fraction) | LUH1 reference (frozen at 2005 for years > 2005) |
+| `HARVEST_SH1/SH2/SH3` | (lat, lon) | Harvest: secondary mature/young/non-forest (unitless fraction) | LUH1 reference (frozen at 2005 for years > 2005) |
+| `GRAZING` | (lat, lon) | Grazing fraction | LUH1 reference (frozen at 2005 for years > 2005) |
+| `LANDMASK` | (lat, lon) | Land/ocean mask | LUH1 reference |
+| `LONGXY`, `LATIXY` | (lat, lon) | 2D coordinate arrays | LUH1 reference |
+| `LON`, `LAT` | (lon), (lat) | 1D coordinate arrays | LUH1 reference |
 
 ---
 
@@ -157,12 +157,7 @@ ncdump -v PCT_PFT output.nc | grep -A 5 "PCT_PFT ="
 
 ## Known Issues
 
-### 1. Harvest units
-- LUH3 uses `gC/m²/yr`; LUH1 expects unitless fractions
-- Current version retains original values without unit conversion
-- May require a scaling factor depending on what `mksurfdat` expects
-
-### 2. 2005–2006 transition
+### 1. 2005–2006 transition
 - If original LUH1 data is available for 1850–2005, it is recommended to:
   - 1850–2005: use original LUH1 files
   - 2006–2023: use converted LUH3 files
@@ -217,6 +212,7 @@ Refer to TaiESM1/CLM4 documentation for the full `mksurfdat` configuration.
 
 | Version | Date | Changes |
 |---|---|---|
+| 6.1 | 2026-06-22 | HARVEST and GRAZING now taken from LUH1 reference (unitless fraction) instead of LUH3 (gC/m²/yr); frozen at 2005 values for years > 2005 |
 | 6.0 | 2026-03-24 | Corrected PFT mapping based on LUH3 data structure analysis; switched to nearest-neighbour regridding; LUH1 reference LANDMASK as master; coastal artifact detection |
 | 1.0 | 2026-01-28 | Initial release — basic LUH3→LUH1 conversion, PFT structure conversion, spatial regridding, harvest data |
 
